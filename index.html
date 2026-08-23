@@ -348,6 +348,8 @@ const mkOf=d=>{const t=new Date(d+'T12:00:00');return t.getFullYear()+'-'+String
 const mkOff=o=>{const d=new Date();d.setDate(1);d.setMonth(d.getMonth()+o);return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0');};
 const mkLab=mk=>{const[y,m]=mk.split('-').map(Number);return MES[m-1]+'/'+String(y).slice(2);};
 const mkLong=mk=>{const[y,m]=mk.split('-').map(Number);return MESL[m-1]+' '+y;};
+const mkSoma=(mk,n)=>{const[y,m]=mk.split('-').map(Number);const d=new Date(y,m-1+n,1);
+  return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0');};
 const mkDiff=(a,b)=>{const[ay,am]=a.split('-').map(Number),[by,bm]=b.split('-').map(Number);return (by-ay)*12+(bm-am);};
 function haptic(){if(navigator.vibrate)navigator.vibrate(8);}
 
@@ -723,7 +725,8 @@ function rowTx(x,cats,mk){
   if(x.fixa){
     sub=`${c.l} · todo dia ${x.dia}`;
     if(alt)sub+=' · alterado só neste mês';
-    else if(x.fim)sub+=` · até ${mkLab(x.fim)}`;
+    else if(x.fim){const r=mkDiff(mk,x.fim)+1;
+      sub+= r>1?` · faltam ${r} meses`: r===1?' · última vez':` · até ${mkLab(x.fim)}`;}
   }else sub=`${c.l} · ${new Date(x.data+'T12:00:00').toLocaleDateString('pt-BR',{day:'2-digit',month:'short'})}`;
   const v=x._v!=null?x._v:x.valor;
   return `<div class="li tapp" data-tx="${x.id}"><div class="dot" style="background:${c.c}22">${c.e}</div>
@@ -906,6 +909,8 @@ function sheetTx(tipo,item,escopo,mkAlvo){
   let cat=item?.cat||cats[0].k, fixa=item?item.fixa:true;
   const vAtual = soMes? valorNoMes(item,mk) : (item?.valor||'');
   const titulo = soMes? 'Só em '+mkLong(mk) : (ed?'Editar':'Nova')+' '+(tipo==='entrada'?'entrada':'saída');
+  let modo = item?.fim ? 'ate' : 'sempre';
+  const qtdIni = (item?.inicio&&item?.fim)? mkDiff(item.inicio,item.fim)+1 : 6;
 
   open(`${HEAD(titulo)}
   <div class="sb">
@@ -918,10 +923,20 @@ function sheetTx(tipo,item,escopo,mkAlvo){
       <button class="sw ${fixa?'on':''}" id="sw"><i></i></button></div>
     <div class="f" id="fd1" style="${fixa?'':'display:none'}"><label>Dia do vencimento</label><input type="number" min="1" max="31" inputmode="numeric" id="fDia" value="${item?.dia||5}"></div>
     <div id="vig" style="${fixa?'':'display:none'}">
-      <div class="f"><label>Vale a partir de</label><input type="month" id="fIni" value="${item?.inicio||mkOff(0)}">
-        <div class="hint">Meses anteriores a este não recebem o lançamento.</div></div>
-      <div class="f"><label>Vale até (opcional)</label><input type="month" id="fFim" value="${item?.fim||''}">
-        <div class="hint">Deixe em branco se não tem data para acabar. Útil para contrato, consórcio ou assinatura com fim previsto.</div></div>
+      <div class="f"><label>Começa em</label><input type="month" id="fIni" value="${item?.inicio||mkOff(0)}"></div>
+      <div class="f"><label>Por quanto tempo</label>
+        <div class="toggle" id="tgDur" style="margin-bottom:0">
+          <button class="${modo==='sempre'?'on':''}" data-dur="sempre">Sem prazo</button>
+          <button class="${modo==='qtd'?'on':''}" data-dur="qtd">Nº de meses</button>
+          <button class="${modo==='ate'?'on':''}" data-dur="ate">Até o mês</button>
+        </div></div>
+      <div class="f" id="fQtdW" style="${modo==='qtd'?'':'display:none'}">
+        <label>Quantos meses</label>
+        <input type="number" min="1" max="600" inputmode="numeric" id="fQtd" value="${qtdIni}">
+        <div class="hint" id="hQtd"></div></div>
+      <div class="f" id="fFimW" style="${modo==='ate'?'':'display:none'}">
+        <label>Último mês</label><input type="month" id="fFim" value="${item?.fim||''}"></div>
+      <div class="hint" id="hSempre" style="${modo==='sempre'?'':'display:none'};margin:-6px 0 14px 2px">Repete indefinidamente, até você encerrar.</div>
     </div>
     <div class="f" id="fd2" style="${fixa?'display:none':''}"><label>Data</label><input type="date" id="fDt" value="${item?.data||isoHoje()}"></div>`}
     <button class="btn" id="sv">Salvar</button>
@@ -933,6 +948,21 @@ function sheetTx(tipo,item,escopo,mkAlvo){
     sheet.querySelectorAll('.cat').forEach(el=>el.onclick=()=>{cat=el.dataset.c;haptic();sheet.querySelectorAll('.cat').forEach(o=>o.classList.remove('on'));el.classList.add('on');});
     $('sw').onclick=()=>{fixa=!fixa;haptic();$('sw').classList.toggle('on',fixa);
       $('fd1').style.display=fixa?'':'none';$('vig').style.display=fixa?'':'none';$('fd2').style.display=fixa?'none':'';};
+
+    // duração: sem prazo | nº de meses | até o mês
+    const previa=()=>{
+      const n=parseInt($('fQtd').value);
+      if(modo!=='qtd'||!n||n<1){$('hQtd').textContent='';return;}
+      $('hQtd').textContent=`De ${mkLab($('fIni').value||mkOff(0))} até ${mkLab(mkSoma($('fIni').value||mkOff(0),n-1))} — ${n} ${n===1?'mês':'meses'}.`;
+    };
+    sheet.querySelectorAll('[data-dur]').forEach(b=>b.onclick=()=>{
+      modo=b.dataset.dur;haptic();
+      sheet.querySelectorAll('[data-dur]').forEach(o=>o.classList.remove('on'));b.classList.add('on');
+      $('fQtdW').style.display=modo==='qtd'?'':'none';
+      $('fFimW').style.display=modo==='ate'?'':'none';
+      $('hSempre').style.display=modo==='sempre'?'':'none';
+      previa();});
+    $('fQtd').oninput=previa; $('fIni').onchange=previa; previa();
   }
 
   $('sv').onclick=()=>{
@@ -947,7 +977,15 @@ function sheetTx(tipo,item,escopo,mkAlvo){
     const desc=$('fD').value.trim();
     if(!desc){toast('Informe a descrição');return;}
     const ini=fixa?($('fIni').value||mkOff(0)):null;
-    const fim=fixa?($('fFim').value||null):null;
+    let fim=null;
+    if(fixa&&modo==='qtd'){
+      const n=parseInt($('fQtd').value);
+      if(!n||n<1){toast('Informe quantos meses');return;}
+      fim=mkSoma(ini,n-1);
+    }else if(fixa&&modo==='ate'){
+      fim=$('fFim').value||null;
+      if(!fim){toast('Informe o último mês');return;}
+    }
     if(fim&&ini&&mkDiff(ini,fim)<0){toast('O fim não pode ser antes do início');return;}
     const o={id:item?.id||uid(),desc,valor,cat,fixa,
       dia:fixa?(parseInt($('fDia').value)||5):null,
