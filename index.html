@@ -330,7 +330,13 @@ const CAT_OUT=[
  {k:'restaurante',l:'Restaurante',e:'🍽️',c:'#FF6B22',ess:0},
  {k:'compras',l:'Compras',e:'🛍️',c:'#AF52DE',ess:0},
  {k:'assinaturas',l:'Assinaturas',e:'📺',c:'#BF5AF2',ess:0},
+ {k:'cartao',l:'Cartão',e:'💳',c:'#5E5CE6',ess:1},
+ {k:'consorcio',l:'Consórcio',e:'🏦',c:'#0A84FF',ess:1},
+ {k:'seguro',l:'Seguro',e:'🛡️',c:'#64D2FF',ess:1},
+ {k:'pet',l:'Pet',e:'🐾',c:'#FF9F0A',ess:1},
+ {k:'lanches',l:'Lanches',e:'🍔',c:'#FF6B22',ess:0},
  {k:'pessoal',l:'Pessoal',e:'✂️',c:'#FF375F',ess:0},
+ {k:'viagem',l:'Viagem',e:'✈️',c:'#30D158',ess:0},
  {k:'outros',l:'Outros',e:'⋯',c:'#8E8E93',ess:0},
 ];
 const CAT_IN=[
@@ -688,17 +694,20 @@ function vPainel(){
 /* Contas em aberto de um mês qualquer */
 function aPagar(mk){
   const L=[];
-  S.despesas.filter(x=>x.fixa&&ativoEm(x,mk)&&!pagoEm(x,mk)).forEach(x=>
-    L.push({id:x.id,tipo:'d',desc:x.desc,valor:valorNoMes(x,mk),dia:x.dia,cat:x.cat}));
+  S.despesas.filter(x=>ativoEm(x,mk)&&!pagoEm(x,mk)).forEach(x=>
+    L.push({id:x.id,tipo:'d',desc:x.desc,valor:valorNoMes(x,mk),
+      dia:x.fixa?x.dia:+x.data.slice(8,10),cat:x.cat,avulso:!x.fixa}));
   S.dividas.forEach(d=>{const v=parcelaNoMes(d,mk);
     if(v&&!pagoEm(d,mk))L.push({id:d.id,tipo:'p',desc:d.desc,valor:v,dia:d.dia,cat:'contas',divida:1});});
   return L.sort((a,b)=>a.dia-b.dia);
 }
 function linhaPagar(x,mk){
   const c=ci(CAT_OUT,x.cat);
-  const quando = x.d!=null ? (x.d===0?'Vence hoje':x.d===1?'Amanhã':'Em '+x.d+' dias') : 'Dia '+x.dia;
+  const quando = x.avulso ? 'Lançamento avulso · dia '+x.dia
+    : x.d!=null ? (x.d===0?'Vence hoje':x.d===1?'Amanhã':'Em '+x.d+' dias')+' · dia '+x.dia
+    : 'Dia '+x.dia;
   return `<div class="li"><div class="dot" style="background:${c.c}22">${x.divida?'📄':c.e}</div>
-    <div class="m"><div class="t">${x.desc}</div><div class="s">${quando}${x.d!=null?' · dia '+x.dia:''}</div></div>
+    <div class="m"><div class="t">${x.desc}</div><div class="s">${quando}</div></div>
     <div class="v num" style="margin-right:4px">${brl(x.valor)}</div>
     <button class="chk" data-pagar="${x.id}" data-ptipo="${x.tipo||(x.divida?'p':'d')}" data-pmk="${mk}" aria-label="Marcar como paga">
       <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/></svg></button></div>`;
@@ -737,12 +746,17 @@ function alertas(mk,t,p,h){
   return A.slice(0,4);
 }
 function vencimentos(dias){
-  const hoje=new Date().getDate(),L=[];
-  const mkAtual=mkOff(0);
-  S.despesas.filter(x=>x.fixa&&x.dia&&ativoEm(x,mkAtual)).forEach(x=>{let d=x.dia-hoje;if(d<0)d+=30;
-    if(d<=dias)L.push({desc:x.desc,valor:valorNoMes(x,mkAtual),dia:x.dia,cat:x.cat,d});});
-  S.dividas.forEach(x=>{if(parcelasRestantes(x)<=0)return;let d=x.dia-hoje;if(d<0)d+=30;
-    if(d<=dias)L.push({desc:x.desc,valor:parcela(x),dia:x.dia,cat:'contas',d,divida:1});});
+  const hoje=new Date().getDate(),L=[],mkAtual=mkOff(0);
+  S.despesas.filter(x=>x.fixa&&x.dia&&ativoEm(x,mkAtual)&&!pagoEm(x,mkAtual)).forEach(x=>{
+    let d=x.dia-hoje;if(d<0)d+=30;
+    if(d<=dias)L.push({id:x.id,tipo:'d',desc:x.desc,valor:valorNoMes(x,mkAtual),dia:x.dia,cat:x.cat,d});});
+  // avulsos do mês corrente que ainda não foram marcados como pagos
+  S.despesas.filter(x=>!x.fixa&&x.data&&mkOf(x.data)===mkAtual&&!pagoEm(x,mkAtual)).forEach(x=>{
+    const dia=+x.data.slice(8,10);let d=dia-hoje;
+    if(d>=-dias&&d<=dias)L.push({id:x.id,tipo:'d',desc:x.desc,valor:+x.valor,dia,cat:x.cat,d:Math.max(0,d),avulso:d<0});});
+  S.dividas.forEach(x=>{if(parcelasRestantes(x)<=0||pagoEm(x,mkAtual))return;
+    let d=x.dia-hoje;if(d<0)d+=30;
+    if(d<=dias)L.push({id:x.id,tipo:'p',desc:x.desc,valor:parcela(x),dia:x.dia,cat:'contas',d,divida:1});});
   return L.sort((a,b)=>a.d-b.d);
 }
 
