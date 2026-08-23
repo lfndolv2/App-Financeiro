@@ -127,6 +127,14 @@ button{font:inherit;color:inherit;touch-action:manipulation;}
 .li .s{font-size:13px;color:var(--ink-3);margin-top:1px;letter-spacing:-.08px;}
 .li .v{font-size:16px;font-weight:600;flex-shrink:0;letter-spacing:-.32px;}
 .chev{width:8px;height:13px;flex-shrink:0;opacity:.3;}
+.chk{width:34px;height:34px;border:none;background:none;display:grid;place-items:center;flex-shrink:0;
+  -webkit-appearance:none;appearance:none;margin-right:-8px;transition:transform .14s;}
+.chk:active{transform:scale(.85);}
+.chk svg{width:23px;height:23px;fill:none;stroke:var(--ink-3);stroke-width:1.6;}
+.chk.on svg{stroke:var(--up);fill:none;stroke-width:2;}
+.li.pago .t{text-decoration:line-through;opacity:.45;}
+.li.pago .v{opacity:.4;}
+.li.pago .dot{opacity:.45;}
 .up{color:var(--up);} .down{color:var(--down);}
 
 /* ═══ HERO ═══ */
@@ -355,7 +363,7 @@ function haptic(){if(navigator.vibrate)navigator.vibrate(8);}
 
 /* ══════════ ESTADO ══════════ */
 let S={saldo:null,receitas:[],despesas:[],dividas:[],metas:[],limites:[],reservaAlvoMeses:6};
-let tab='painel', txTipo='saida', off=0, projMeses=12, projAberto=null;
+let tab='painel', txTipo='saida', off=0, pOff=0, projMeses=12, projAberto=null;
 
 function load(){
   try{
@@ -366,7 +374,9 @@ function load(){
   [...S.receitas,...S.despesas].forEach(x=>{
     if(x.fixa&&x.inicio===undefined)x.inicio=null;
     if(x.exc===undefined)x.exc={};
+    if(x.pg===undefined)x.pg={};
   });
+  S.dividas.forEach(d=>{if(d.pg===undefined)d.pg={};});
   document.getElementById('load').style.display='none';
   document.getElementById('app').style.display='block';
   draw();
@@ -450,6 +460,25 @@ function valorNoMes(x,mk){
   return +x.valor;
 }
 const ativoEm=(x,mk)=>valorNoMes(x,mk)!==null;
+/* Pagamento: x.pg = {'AAAA-MM':1} marca aquele mês como quitado */
+const pagoEm=(x,mk)=>!!(x.pg&&x.pg[mk]);
+function togglePago(x,mk){
+  x.pg=x.pg||{};
+  if(x.pg[mk]){delete x.pg[mk];toast('Marcado como em aberto');}
+  else{x.pg[mk]=1;haptic();toast('Marcado como paga');}
+  save();draw();
+}
+/* Situação das contas do mês: pago x em aberto (despesas + parcelas) */
+function contasDoMes(mk){
+  let pago=0,aberto=0,qtdPago=0,qtdTotal=0;
+  S.despesas.filter(x=>ativoEm(x,mk)).forEach(x=>{
+    const v=valorNoMes(x,mk);qtdTotal++;
+    if(pagoEm(x,mk)){pago+=v;qtdPago++;}else aberto+=v;});
+  S.dividas.forEach(d=>{
+    const v=parcelaNoMes(d,mk);if(!v)return;qtdTotal++;
+    if(pagoEm(d,mk)){pago+=v;qtdPago++;}else aberto+=v;});
+  return {pago,aberto,qtdPago,qtdTotal,total:pago+aberto};
+}
 const somaFixa=(lista,mk)=>lista.filter(x=>x.fixa).reduce((s,x)=>s+(valorNoMes(x,mk)||0),0);
 const recFixa=(mk=mkOff(0))=>somaFixa(S.receitas,mk);
 const despFixa=(mk=mkOff(0))=>somaFixa(S.despesas,mk);
@@ -480,8 +509,9 @@ function gastoCat(mk,k){
 const limiteValor=(b,mk=mkOff(0))=>b.tipo==='pct'? recFixa(mk)*(b.valor/100) : b.valor;
 const essenciais=mk=>CAT_OUT.filter(c=>c.ess).reduce((s,c)=>s+gastoCat(mk,c.k),0);
 
-function saude(){
-  const t=mes(mkOff(0));let score=0;
+function saude(mk){
+  mk=mk||mkOff(0);
+  const t=mes(mk);let score=0;
   const taxa=t.receita>0?t.sobra/t.receita:0;
   score+=Math.max(0,Math.min(30,taxa*150));
   const comp=t.receita>0?t.divida/t.receita:0;
@@ -491,7 +521,7 @@ function saude(){
   const meses=custoMensal>0?reserva/custoMensal:0;
   score+=Math.min(25,meses/S.reservaAlvoMeses*25);
   if(S.limites.length){
-    const ok=S.limites.filter(b=>gastoCat(mkOff(0),b.cat)<=limiteValor(b,mkOff(0))).length;
+    const ok=S.limites.filter(b=>gastoCat(mk,b.cat)<=limiteValor(b,mk)).length;
     score+=ok/S.limites.length*20;
   }else score+=10;
   return {score:Math.round(Math.max(0,Math.min(100,score))),taxa,comp,mesesReserva:meses,reserva,custoMensal};
@@ -576,27 +606,45 @@ function view(){
 /* ───── PAINEL ───── */
 function vPainel(){
   if(S.saldo===null&&!S.receitas.length&&!S.despesas.length)return onboarding();
-  const mk=mkOff(0),t=mes(mk),p=projecao(12),h=saude();
-  const fim=p[p.length-1].acumulado, compromissos=t.despesa+t.divida;
+  const mk=mkOff(pOff), atual=pOff===0, t=mes(mk), p=projecao(Math.max(12,pOff+1)), h=saude(mk);
+  const proj=p[pOff]||p[p.length-1];
+  const compromissos=t.despesa+t.divida;
   const cats=CAT_OUT.map(c=>({...c,value:gastoCat(mk,c.k)})).filter(x=>x.value>0).sort((a,b)=>b.value-a.value);
   const ess=essenciais(mk),nEss=t.despesa-ess;
   const base=Math.max(t.receita,compromissos+Math.max(0,t.sobra))||1;
   const seg=[['Essenciais',ess,'#007AFF'],['Variáveis',nEss,'#FF9500'],['Dívidas',t.divida,'#FF3B30'],['Sobra',Math.max(0,t.sobra),'#34C759']].filter(x=>x[1]>0);
-  const al=alertas(mk,t,p,h),venc=vencimentos(7);
+  const cont=contasDoMes(mk);
+  const pctPago=cont.total>0?Math.round(cont.pago/cont.total*100):0;
 
   return `
+  <div class="monthbar">
+    <button id="pprev" aria-label="Mês anterior"><svg viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7"/></svg></button>
+    <div class="mid"><div class="a">${mkLong(mk)}${atual?'':''}</div>
+      <div class="b num" style="color:${t.sobra>=0?'var(--up)':'var(--down)'}">sobra ${brl(t.sobra)}</div></div>
+    <button id="pnext" aria-label="Próximo mês"><svg viewBox="0 0 24 24"><path d="M9 5l7 7-7 7"/></svg></button></div>
+  ${atual?'':`<div style="text-align:center;margin:-4px 0 10px"><button id="phoje" style="border:none;background:var(--fill);color:var(--accent);font-size:13px;font-weight:500;padding:6px 16px;border-radius:16px;-webkit-appearance:none">Voltar para ${mkLab(mkOff(0))}</button></div>`}
+
   <div class="hero">
-    <div class="lbl">Saldo hoje</div>
-    <div class="big num">${S.saldo===null?'—':brl(S.saldo)}</div>
-    <div class="delta">${t.sobra>=0?'▲':'▼'} ${brl(Math.abs(t.sobra))} previstos ${t.sobra>=0?'de sobra':'de rombo'} neste mês</div>
-    <div class="horizon">${seg.map(s=>`<i style="width:${s[1]/base*100}%;background:${s[2]}"></i>`).join('')}</div>
-    <div class="hlegend">${seg.map(s=>`<span><b style="background:${s[2]}"></b>${s[0]} ${Math.round(s[1]/base*100)}%</span>`).join('')}</div>
+    <div class="lbl">${atual?'Saldo hoje':'Saldo projetado ao fim de '+mkLab(mk)}</div>
+    <div class="big num">${atual?(S.saldo===null?'—':brl(S.saldo)):brl(proj.acumulado)}</div>
+    <div class="delta">${t.sobra>=0?'▲':'▼'} ${brl(Math.abs(t.sobra))} ${atual?'previstos':''} ${t.sobra>=0?'de sobra':'de rombo'} ${atual?'neste mês':'em '+mkLab(mk)}</div>
+    <div class="horizon">${seg.map(x=>`<i style="width:${x[1]/base*100}%;background:${x[2]}"></i>`).join('')}</div>
+    <div class="hlegend">${seg.map(x=>`<span><b style="background:${x[2]}"></b>${x[0]} ${Math.round(x[1]/base*100)}%</span>`).join('')}</div>
     <div class="split">
       <div><div class="k">Entra no mês</div><div class="v num">${brl0(t.receita)}</div></div>
       <div><div class="k">Compromissos</div><div class="v num">${brl0(compromissos)}</div></div>
-      <div><div class="k">Em 12 meses</div><div class="v num" style="color:${fim>=0?'#30D158':'#FF6961'}">${brl0(fim)}</div></div>
+      <div><div class="k">${atual?'Em 12 meses':'Sobra do mês'}</div><div class="v num" style="color:${(atual?p[p.length-1].acumulado:t.sobra)>=0?'#30D158':'#FF6961'}">${brl0(atual?p[p.length-1].acumulado:t.sobra)}</div></div>
     </div>
   </div>
+
+  ${cont.qtdTotal?`<div class="card tight">
+    <div style="display:flex;justify-content:space-between;align-items:baseline;gap:10px">
+      <div><div style="font-size:12px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--ink-3)">Contas de ${mkLab(mk)}</div>
+        <div class="num" style="font-size:22px;font-weight:700;letter-spacing:-.5px;margin-top:2px;color:${cont.aberto>0?'var(--ink)':'var(--up)'}">${cont.aberto>0?brl(cont.aberto):'Tudo pago'}</div>
+        <div style="font-size:13px;color:var(--ink-3);margin-top:2px">${cont.aberto>0?`em aberto · ${cont.qtdPago} de ${cont.qtdTotal} contas pagas`:`${cont.qtdTotal} contas quitadas`}</div></div>
+      <div class="num" style="font-size:15px;font-weight:650;color:${pctPago===100?'var(--up)':'var(--accent)'}">${pctPago}%</div></div>
+    <div class="track" style="margin-top:11px"><i style="width:${pctPago}%;background:${pctPago===100?'var(--up)':'var(--accent)'}"></i></div>
+  </div>`:''}
 
   <div class="kpis">
     <div class="kpi"><div class="k">Taxa de<br>poupança</div><div class="v num" style="color:${h.taxa>=.2?'var(--up)':h.taxa>=.05?'var(--warn)':'var(--down)'}">${Math.round(h.taxa*100)}%</div><div class="n">meta 20%</div></div>
@@ -604,23 +652,22 @@ function vPainel(){
     <div class="kpi"><div class="k">Reserva de<br>emergência</div><div class="v num" style="color:${h.mesesReserva>=3?'var(--up)':h.mesesReserva>=1?'var(--warn)':'var(--down)'}">${h.mesesReserva.toFixed(1)}m</div><div class="n">meta ${S.reservaAlvoMeses}m</div></div>
   </div>
 
-  <div class="card tight" style="display:flex;align-items:center;gap:16px">
+  ${atual?`<div class="card tight" style="display:flex;align-items:center;gap:16px">
     ${gauge(h.score)}
     <div style="flex:1;min-width:0">
       <div style="font-size:16px;font-weight:600;letter-spacing:-.32px">Saúde financeira</div>
       <div style="font-size:13.5px;color:var(--ink-2);line-height:1.42;margin-top:3px;letter-spacing:-.08px">${diagnostico(h)}</div>
-    </div>
-  </div>
+    </div></div>`:''}
 
-  ${al.length?`<div class="eyebrow">Atenção</div>`+al.map(x=>`<div class="alert ${x.tipo}"><i>${x.tipo==='crit'?'􀇾':x.tipo==='warn'?'●':'✓'}</i><span>${x.txt}</span></div>`).join(''):''}
+  ${(()=>{const al=alertas(mk,t,p,h);return al.length?`<div class="eyebrow">Atenção</div>`+al.map(x=>`<div class="alert ${x.tipo}"><i>${x.tipo==='crit'?'􀇾':x.tipo==='warn'?'●':'✓'}</i><span>${x.txt}</span></div>`).join(''):'';})()}
 
-  <div class="eyebrow">Fluxo de caixa <span class="aux">próximos 12 meses</span></div>
-  <div class="card">${chartFluxo(p)}
+  ${atual?`<div class="eyebrow">Fluxo de caixa <span class="aux">próximos 12 meses</span></div>
+  <div class="card">${chartFluxo(p.slice(0,12))}
     <div style="display:flex;gap:14px;margin-top:8px;font-size:11.5px;color:var(--ink-3);font-weight:500;flex-wrap:wrap">
       <span style="display:flex;align-items:center;gap:5px"><b style="width:8px;height:8px;border-radius:2px;background:var(--up);display:inline-block"></b>Entradas</span>
       <span style="display:flex;align-items:center;gap:5px"><b style="width:8px;height:8px;border-radius:2px;background:var(--down);display:inline-block"></b>Saídas</span>
       <span style="display:flex;align-items:center;gap:5px"><b style="width:10px;height:2px;background:var(--ink);display:inline-block"></b>Saldo acumulado</span>
-    </div></div>
+    </div></div>`:''}
 
   ${cats.length?`<div class="eyebrow">Para onde vai o dinheiro <span class="aux">${mkLong(mk)}</span></div>
   <div class="card" style="display:flex;align-items:center;gap:16px">
@@ -632,12 +679,29 @@ function vPainel(){
         <span class="num" style="color:var(--ink-3);font-weight:500">${Math.round(c.value/(t.despesa||1)*100)}%</span></div>`).join('')}
     </div></div>`:''}
 
-  <div class="eyebrow">Próximos 7 dias</div>
-  ${venc.length?`<div class="list">${venc.map(v=>{const c=ci(CAT_OUT,v.cat);
-    return `<div class="li"><div class="dot" style="background:${c.c}22">${v.divida?'📄':c.e}</div>
-      <div class="m"><div class="t">${v.desc}</div><div class="s">${v.d===0?'Vence hoje':v.d===1?'Amanhã':'Em '+v.d+' dias'} · dia ${v.dia}</div></div>
-      <div class="v num">${brl(v.valor)}</div></div>`}).join('')}</div>`
-   :`<div class="card empty"><div class="i">🗓️</div><div class="t">Nada vencendo</div><div class="s">Nenhum compromisso fixo nos próximos 7 dias.</div></div>`}`;
+  <div class="eyebrow">${atual?'A pagar nos próximos 7 dias':'A pagar em '+mkLab(mk)}</div>
+  ${(()=>{const v=atual?vencimentos(7):aPagar(mk);
+    return v.length?`<div class="list">${v.map(x=>linhaPagar(x,mk)).join('')}</div>`
+     :`<div class="card empty"><div class="i">${cont.qtdTotal?'✅':'🗓️'}</div><div class="t">${cont.qtdTotal?'Nada em aberto':'Nada cadastrado'}</div><div class="s">${cont.qtdTotal?'Todas as contas do período estão pagas.':'Cadastre suas despesas fixas para acompanhar.'}</div></div>`;})()}
+  `;
+}
+/* Contas em aberto de um mês qualquer */
+function aPagar(mk){
+  const L=[];
+  S.despesas.filter(x=>x.fixa&&ativoEm(x,mk)&&!pagoEm(x,mk)).forEach(x=>
+    L.push({id:x.id,tipo:'d',desc:x.desc,valor:valorNoMes(x,mk),dia:x.dia,cat:x.cat}));
+  S.dividas.forEach(d=>{const v=parcelaNoMes(d,mk);
+    if(v&&!pagoEm(d,mk))L.push({id:d.id,tipo:'p',desc:d.desc,valor:v,dia:d.dia,cat:'contas',divida:1});});
+  return L.sort((a,b)=>a.dia-b.dia);
+}
+function linhaPagar(x,mk){
+  const c=ci(CAT_OUT,x.cat);
+  const quando = x.d!=null ? (x.d===0?'Vence hoje':x.d===1?'Amanhã':'Em '+x.d+' dias') : 'Dia '+x.dia;
+  return `<div class="li"><div class="dot" style="background:${c.c}22">${x.divida?'📄':c.e}</div>
+    <div class="m"><div class="t">${x.desc}</div><div class="s">${quando}${x.d!=null?' · dia '+x.dia:''}</div></div>
+    <div class="v num" style="margin-right:4px">${brl(x.valor)}</div>
+    <button class="chk" data-pagar="${x.id}" data-ptipo="${x.tipo||(x.divida?'p':'d')}" data-pmk="${mk}" aria-label="Marcar como paga">
+      <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/></svg></button></div>`;
 }
 function onboarding(){
   return `<div class="card" style="padding:22px 18px;margin-top:6px">
@@ -729,9 +793,14 @@ function rowTx(x,cats,mk){
       sub+= r>1?` · faltam ${r} meses`: r===1?' · última vez':` · até ${mkLab(x.fim)}`;}
   }else sub=`${c.l} · ${new Date(x.data+'T12:00:00').toLocaleDateString('pt-BR',{day:'2-digit',month:'short'})}`;
   const v=x._v!=null?x._v:x.valor;
-  return `<div class="li tapp" data-tx="${x.id}"><div class="dot" style="background:${c.c}22">${c.e}</div>
-    <div class="m"><div class="t">${x.desc}${alt?' <span style="font-size:11px;color:var(--warn)">•</span>':''}</div><div class="s">${sub}</div></div>
-    <div class="v num ${txTipo==='entrada'?'up':''}">${txTipo==='entrada'?'+':'−'} ${brl(v)}</div></div>`;
+  const saida=txTipo==='saida', pg=saida&&pagoEm(x,mk);
+  return `<div class="li ${pg?'pago':''}">
+    <div class="dot tapp" data-tx="${x.id}" style="background:${c.c}22">${c.e}</div>
+    <div class="m tapp" data-tx="${x.id}"><div class="t">${x.desc}${alt?' <span style="font-size:11px;color:var(--warn)">•</span>':''}</div><div class="s">${pg?'Paga · ':''}${sub}</div></div>
+    <div class="v num ${saida?'':'up'}" data-tx="${x.id}">${saida?'−':'+'} ${brl(v)}</div>
+    ${saida?`<button class="chk ${pg?'on':''}" data-pagar="${x.id}" data-ptipo="d" data-pmk="${mk}" aria-label="${pg?'Desmarcar':'Marcar como paga'}">
+      <svg viewBox="0 0 24 24">${pg?'<circle cx="12" cy="12" r="10"/><path d="M7.8 12.3l2.8 2.8 5.6-5.9" stroke-linecap="round" stroke-linejoin="round"/>':'<circle cx="12" cy="12" r="10"/>'}</svg></button>`:''}
+  </div>`;
 }
 
 /* ───── DÍVIDAS ───── */
@@ -1175,10 +1244,18 @@ function sheetAporte(g){
 
 /* ══════════ EVENTOS ══════════ */
 function wire(){
-  document.querySelectorAll('[data-tab]').forEach(b=>b.onclick=()=>{if(tab!==b.dataset.tab)haptic();tab=b.dataset.tab;window.scrollTo(0,0);draw();});
+  document.querySelectorAll('[data-tab]').forEach(b=>b.onclick=()=>{if(tab!==b.dataset.tab)haptic();tab=b.dataset.tab;pOff=0;window.scrollTo(0,0);draw();});
   if($('gear'))$('gear').onclick=sheetConfig;
   if($('fab'))$('fab').onclick=()=>sheetTx(txTipo);
   document.querySelectorAll('[data-tt]').forEach(b=>b.onclick=()=>{txTipo=b.dataset.tt;haptic();draw();});
+  if($('pprev'))$('pprev').onclick=()=>{pOff--;window.scrollTo(0,0);draw();};
+  if($('pnext'))$('pnext').onclick=()=>{pOff++;window.scrollTo(0,0);draw();};
+  if($('phoje'))$('phoje').onclick=()=>{pOff=0;haptic();window.scrollTo(0,0);draw();};
+  document.querySelectorAll('[data-pagar]').forEach(b=>b.onclick=e=>{
+    e.stopPropagation();
+    const id=b.dataset.pagar,mk=b.dataset.pmk;
+    const alvo = b.dataset.ptipo==='p' ? S.dividas.find(d=>d.id===id) : S.despesas.find(x=>x.id===id);
+    if(alvo)togglePago(alvo,mk);});
   if($('prev'))$('prev').onclick=()=>{off--;draw();};
   if($('next'))$('next').onclick=()=>{off++;draw();};
   document.querySelectorAll('[data-pm]').forEach(b=>b.onclick=()=>{projMeses=+b.dataset.pm;haptic();draw();});
