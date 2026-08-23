@@ -41,6 +41,6 @@ no Arquivos ou iCloud Drive. Restaure pelo mesmo menu. O app avisa quando passa
 
 ## Atualizar o app depois
 
-Suba o `index.html` novo e incremente a versão do cache em `sw.js`
+Suba os arquivos novos e incremente a versão do cache em `sw.js`
 (`const CACHE='financeiro-v2'`). Sem isso o iPhone continua servindo a versão antiga
 do cache. Atualizar o app **não** apaga seus lançamentos.

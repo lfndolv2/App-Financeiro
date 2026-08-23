@@ -360,6 +360,11 @@ function load(){
     const raw=localStorage.getItem(KEY);
     if(raw)S=Object.assign(S,JSON.parse(raw));
   }catch(e){console.warn('Falha ao ler dados locais',e);}
+  // migração: fixos criados antes da vigência valem desde sempre
+  [...S.receitas,...S.despesas].forEach(x=>{
+    if(x.fixa&&x.inicio===undefined)x.inicio=null;
+    if(x.exc===undefined)x.exc={};
+  });
   document.getElementById('load').style.display='none';
   document.getElementById('app').style.display='block';
   draw();
@@ -429,13 +434,28 @@ const parcelasRestantes=d=>Math.max(0,d.parcelas-(d.pagas||0));
 const saldoDivida=d=>parcelasRestantes(d)*parcela(d);
 function quitacao(d){const[y,m]=d.inicio.split('-').map(Number);const dt=new Date(y,m-1+d.parcelas-1,1);
   return dt.getFullYear()+'-'+String(dt.getMonth()+1).padStart(2,'0');}
-const recFixa=()=>S.receitas.filter(x=>x.fixa).reduce((s,x)=>s+ +x.valor,0);
-const despFixa=()=>S.despesas.filter(x=>x.fixa).reduce((s,x)=>s+ +x.valor,0);
+/* Vigência de um lançamento fixo em determinado mês.
+   Retorna o valor válido naquele mês, ou null se não vale.
+   x.inicio / x.fim  = 'AAAA-MM' (fim opcional)
+   x.exc[mk]         = {valor:N} altera só aquele mês | 'pular' remove só aquele mês */
+function valorNoMes(x,mk){
+  if(!x.fixa)return (x.data&&mkOf(x.data)===mk)? +x.valor : null;
+  if(x.inicio&&mkDiff(x.inicio,mk)<0)return null;
+  if(x.fim&&mkDiff(x.fim,mk)>0)return null;
+  const e=x.exc&&x.exc[mk];
+  if(e==='pular')return null;
+  if(e&&typeof e==='object'&&e.valor!=null)return +e.valor;
+  return +x.valor;
+}
+const ativoEm=(x,mk)=>valorNoMes(x,mk)!==null;
+const somaFixa=(lista,mk)=>lista.filter(x=>x.fixa).reduce((s,x)=>s+(valorNoMes(x,mk)||0),0);
+const recFixa=(mk=mkOff(0))=>somaFixa(S.receitas,mk);
+const despFixa=(mk=mkOff(0))=>somaFixa(S.despesas,mk);
 
 function mes(mk){
   const rv=S.receitas.filter(x=>!x.fixa&&x.data&&mkOf(x.data)===mk).reduce((s,x)=>s+ +x.valor,0);
   const dv=S.despesas.filter(x=>!x.fixa&&x.data&&mkOf(x.data)===mk).reduce((s,x)=>s+ +x.valor,0);
-  const receita=recFixa()+rv, despesa=despFixa()+dv;
+  const receita=recFixa(mk)+rv, despesa=despFixa(mk)+dv;
   const divida=S.dividas.reduce((s,d)=>s+parcelaNoMes(d,mk),0);
   return {mk,receita,despesa,divida,sobra:receita-despesa-divida};
 }
@@ -451,11 +471,11 @@ function projecao(n){
   return out;
 }
 function gastoCat(mk,k){
-  const f=S.despesas.filter(x=>x.fixa&&x.cat===k).reduce((s,x)=>s+ +x.valor,0);
+  const f=S.despesas.filter(x=>x.fixa&&x.cat===k).reduce((s,x)=>s+(valorNoMes(x,mk)||0),0);
   const v=S.despesas.filter(x=>!x.fixa&&x.cat===k&&x.data&&mkOf(x.data)===mk).reduce((s,x)=>s+ +x.valor,0);
   return f+v;
 }
-const limiteValor=b=>b.tipo==='pct'? recFixa()*(b.valor/100) : b.valor;
+const limiteValor=(b,mk=mkOff(0))=>b.tipo==='pct'? recFixa(mk)*(b.valor/100) : b.valor;
 const essenciais=mk=>CAT_OUT.filter(c=>c.ess).reduce((s,c)=>s+gastoCat(mk,c.k),0);
 
 function saude(){
@@ -469,7 +489,7 @@ function saude(){
   const meses=custoMensal>0?reserva/custoMensal:0;
   score+=Math.min(25,meses/S.reservaAlvoMeses*25);
   if(S.limites.length){
-    const ok=S.limites.filter(b=>gastoCat(mkOff(0),b.cat)<=limiteValor(b)).length;
+    const ok=S.limites.filter(b=>gastoCat(mkOff(0),b.cat)<=limiteValor(b,mkOff(0))).length;
     score+=ok/S.limites.length*20;
   }else score+=10;
   return {score:Math.round(Math.max(0,Math.min(100,score))),taxa,comp,mesesReserva:meses,reserva,custoMensal};
@@ -652,7 +672,9 @@ function alertas(mk,t,p,h){
 }
 function vencimentos(dias){
   const hoje=new Date().getDate(),L=[];
-  S.despesas.filter(x=>x.fixa&&x.dia).forEach(x=>{let d=x.dia-hoje;if(d<0)d+=30;if(d<=dias)L.push({desc:x.desc,valor:x.valor,dia:x.dia,cat:x.cat,d});});
+  const mkAtual=mkOff(0);
+  S.despesas.filter(x=>x.fixa&&x.dia&&ativoEm(x,mkAtual)).forEach(x=>{let d=x.dia-hoje;if(d<0)d+=30;
+    if(d<=dias)L.push({desc:x.desc,valor:valorNoMes(x,mkAtual),dia:x.dia,cat:x.cat,d});});
   S.dividas.forEach(x=>{if(parcelasRestantes(x)<=0)return;let d=x.dia-hoje;if(d<0)d+=30;
     if(d<=dias)L.push({desc:x.desc,valor:parcela(x),dia:x.dia,cat:'contas',d,divida:1});});
   return L.sort((a,b)=>a.d-b.d);
@@ -661,10 +683,10 @@ function vencimentos(dias){
 /* ───── MOVIMENTOS ───── */
 function vMov(){
   const mk=mkOff(off),lista=S[txTipo==='entrada'?'receitas':'despesas'];
-  const itens=lista.filter(x=>x.fixa||(x.data&&mkOf(x.data)===mk));
-  const total=itens.reduce((s,x)=>s+ +x.valor,0);
+  const itens=lista.filter(x=>ativoEm(x,mk)).map(x=>({...x,_v:valorNoMes(x,mk)}));
+  const total=itens.reduce((s,x)=>s+x._v,0);
   const cats=txTipo==='entrada'?CAT_IN:CAT_OUT;
-  const agg={};itens.forEach(x=>agg[x.cat]=(agg[x.cat]||0)+ +x.valor);
+  const agg={};itens.forEach(x=>agg[x.cat]=(agg[x.cat]||0)+x._v);
   const dd=Object.keys(agg).map(k=>({...ci(cats,k),value:agg[k]})).sort((a,b)=>b.value-a.value);
   const fixos=itens.filter(x=>x.fixa),avulsos=itens.filter(x=>!x.fixa).sort((a,b)=>(b.data||'').localeCompare(a.data||''));
   const ant=off>0?mes(mkOff(off-1)):null, cmp=ant?(txTipo==='entrada'?ant.receita:ant.despesa):null;
@@ -688,18 +710,25 @@ function vMov(){
         <span class="num" style="color:var(--ink-3);font-weight:500">${brl0(c.value)}</span></div>`).join('')}
     </div></div>`:''}
 
-  ${fixos.length?`<div class="eyebrow">Fixos do mês <span class="aux">${brl0(fixos.reduce((s,x)=>s+ +x.valor,0))}</span></div>
-  <div class="list">${fixos.sort((a,b)=>b.valor-a.valor).map(x=>rowTx(x,cats)).join('')}</div>`:''}
-  ${avulsos.length?`<div class="eyebrow">Avulsos <span class="aux">${brl0(avulsos.reduce((s,x)=>s+ +x.valor,0))}</span></div>
-  <div class="list">${avulsos.map(x=>rowTx(x,cats)).join('')}</div>`:''}
+  ${fixos.length?`<div class="eyebrow">Fixos do mês <span class="aux">${brl0(fixos.reduce((s,x)=>s+x._v,0))}</span></div>
+  <div class="list">${fixos.sort((a,b)=>b._v-a._v).map(x=>rowTx(x,cats,mk)).join('')}</div>`:''}
+  ${avulsos.length?`<div class="eyebrow">Avulsos <span class="aux">${brl0(avulsos.reduce((s,x)=>s+x._v,0))}</span></div>
+  <div class="list">${avulsos.map(x=>rowTx(x,cats,mk)).join('')}</div>`:''}
   ${!itens.length?`<div class="card empty"><div class="i">${txTipo==='entrada'?'💰':'🧾'}</div><div class="t">Nada em ${mkLong(mk)}</div><div class="s">Toque no + para lançar.</div></div>`:''}`;
 }
-function rowTx(x,cats){
+function rowTx(x,cats,mk){
   const c=ci(cats,x.cat);
-  const sub=x.fixa?`${c.l} · todo dia ${x.dia}`:`${c.l} · ${new Date(x.data+'T12:00:00').toLocaleDateString('pt-BR',{day:'2-digit',month:'short'})}`;
+  const alt=x.exc&&x.exc[mk]&&typeof x.exc[mk]==='object';
+  let sub;
+  if(x.fixa){
+    sub=`${c.l} · todo dia ${x.dia}`;
+    if(alt)sub+=' · alterado só neste mês';
+    else if(x.fim)sub+=` · até ${mkLab(x.fim)}`;
+  }else sub=`${c.l} · ${new Date(x.data+'T12:00:00').toLocaleDateString('pt-BR',{day:'2-digit',month:'short'})}`;
+  const v=x._v!=null?x._v:x.valor;
   return `<div class="li tapp" data-tx="${x.id}"><div class="dot" style="background:${c.c}22">${c.e}</div>
-    <div class="m"><div class="t">${x.desc}</div><div class="s">${sub}</div></div>
-    <div class="v num ${txTipo==='entrada'?'up':''}">${txTipo==='entrada'?'+':'−'} ${brl(x.valor)}</div></div>`;
+    <div class="m"><div class="t">${x.desc}${alt?' <span style="font-size:11px;color:var(--warn)">•</span>':''}</div><div class="s">${sub}</div></div>
+    <div class="v num ${txTipo==='entrada'?'up':''}">${txTipo==='entrada'?'+':'−'} ${brl(v)}</div></div>`;
 }
 
 /* ───── DÍVIDAS ───── */
@@ -774,7 +803,7 @@ function cardMeta(g,mk){
     </div></div>`;
 }
 function cardLimite(b,mk){
-  const c=ci(CAT_OUT,b.cat),g=gastoCat(mk,b.cat),L=limiteValor(b);
+  const c=ci(CAT_OUT,b.cat),g=gastoCat(mk,b.cat),L=limiteValor(b,mk);
   const pct=L>0?Math.round(g/L*100):0;
   const cor=pct>100?'var(--down)':pct>=85?'var(--warn)':'var(--up)';
   return `<div class="card tapp" data-lim="${b.id}">
@@ -870,34 +899,89 @@ function sheetConfig(){
   $('sv').onclick=()=>{const v=parseFloat($('fS').value);S.saldo=isNaN(v)?null:v;S.reservaAlvoMeses=+$('fR').value;save();close();draw();toast('Ajustes salvos');};
   $('rst').onclick=()=>sheetAction([{l:'Apagar tudo definitivamente',dg:1,fn:()=>{S={saldo:null,receitas:[],despesas:[],dividas:[],metas:[],limites:[],reservaAlvoMeses:6};save();close();draw();toast('Dados apagados');}}]);
 }
-function sheetTx(tipo,item){
+function sheetTx(tipo,item,escopo,mkAlvo){
   const cats=tipo==='entrada'?CAT_IN:CAT_OUT;
-  let cat=item?.cat||cats[0].k,fixa=item?item.fixa:true;const ed=!!item;
-  open(`${HEAD((ed?'Editar':'Nova')+' '+(tipo==='entrada'?'entrada':'saída'))}
+  const ed=!!item, soMes=escopo==='mes';
+  const mk=mkAlvo||mkOff(0);
+  let cat=item?.cat||cats[0].k, fixa=item?item.fixa:true;
+  const vAtual = soMes? valorNoMes(item,mk) : (item?.valor||'');
+  const titulo = soMes? 'Só em '+mkLong(mk) : (ed?'Editar':'Nova')+' '+(tipo==='entrada'?'entrada':'saída');
+
+  open(`${HEAD(titulo)}
   <div class="sb">
-    <div class="f"><label>Descrição</label><input type="text" id="fD" placeholder="${tipo==='entrada'?'Salário':'Aluguel'}" value="${item?.desc||''}"></div>
-    <div class="f"><label>Valor</label><input type="number" step="0.01" inputmode="decimal" id="fV" placeholder="0,00" value="${item?.valor||''}"></div>
-    <div class="f"><label>Categoria</label><div class="cats" id="cg">
+    ${soMes?`<div class="alert warn" style="margin-bottom:14px"><i>●</i><span>A alteração vale apenas para <b>${mkLong(mk)}</b>. Os demais meses seguem com ${brl(item.valor)}.</span></div>`:''}
+    <div class="f"><label>Descrição</label><input type="text" id="fD" placeholder="${tipo==='entrada'?'Salário':'Aluguel'}" value="${item?.desc||''}" ${soMes?'disabled style="opacity:.5"':''}></div>
+    <div class="f"><label>Valor${soMes?' neste mês':''}</label><input type="number" step="0.01" inputmode="decimal" id="fV" placeholder="0,00" value="${vAtual}"></div>
+    ${soMes?'':`<div class="f"><label>Categoria</label><div class="cats" id="cg">
       ${cats.map(c=>`<div class="cat ${c.k===cat?'on':''}" data-c="${c.k}"><span class="e">${c.e}</span>${c.l}</div>`).join('')}</div></div>
     <div class="swrow"><div><div class="l">Repete todo mês</div><div class="h">Entra automaticamente na projeção</div></div>
       <button class="sw ${fixa?'on':''}" id="sw"><i></i></button></div>
     <div class="f" id="fd1" style="${fixa?'':'display:none'}"><label>Dia do vencimento</label><input type="number" min="1" max="31" inputmode="numeric" id="fDia" value="${item?.dia||5}"></div>
-    <div class="f" id="fd2" style="${fixa?'display:none':''}"><label>Data</label><input type="date" id="fDt" value="${item?.data||isoHoje()}"></div>
+    <div id="vig" style="${fixa?'':'display:none'}">
+      <div class="f"><label>Vale a partir de</label><input type="month" id="fIni" value="${item?.inicio||mkOff(0)}">
+        <div class="hint">Meses anteriores a este não recebem o lançamento.</div></div>
+      <div class="f"><label>Vale até (opcional)</label><input type="month" id="fFim" value="${item?.fim||''}">
+        <div class="hint">Deixe em branco se não tem data para acabar. Útil para contrato, consórcio ou assinatura com fim previsto.</div></div>
+    </div>
+    <div class="f" id="fd2" style="${fixa?'display:none':''}"><label>Data</label><input type="date" id="fDt" value="${item?.data||isoHoje()}"></div>`}
     <button class="btn" id="sv">Salvar</button>
-    ${ed?'<button class="btn ghost" id="del">Excluir</button>':''}</div>`);
+    ${ed&&!soMes?'<button class="btn ghost" id="del">Excluir</button>':''}
+    ${soMes&&item.exc&&item.exc[mk]?'<button class="btn ghost" id="undo">Desfazer alteração deste mês</button>':''}</div>`);
   $('x').onclick=close;
-  sheet.querySelectorAll('.cat').forEach(el=>el.onclick=()=>{cat=el.dataset.c;haptic();sheet.querySelectorAll('.cat').forEach(o=>o.classList.remove('on'));el.classList.add('on');});
-  $('sw').onclick=()=>{fixa=!fixa;haptic();$('sw').classList.toggle('on',fixa);$('fd1').style.display=fixa?'':'none';$('fd2').style.display=fixa?'none':'';};
+
+  if(!soMes){
+    sheet.querySelectorAll('.cat').forEach(el=>el.onclick=()=>{cat=el.dataset.c;haptic();sheet.querySelectorAll('.cat').forEach(o=>o.classList.remove('on'));el.classList.add('on');});
+    $('sw').onclick=()=>{fixa=!fixa;haptic();$('sw').classList.toggle('on',fixa);
+      $('fd1').style.display=fixa?'':'none';$('vig').style.display=fixa?'':'none';$('fd2').style.display=fixa?'none':'';};
+  }
+
   $('sv').onclick=()=>{
-    const desc=$('fD').value.trim(),valor=parseFloat($('fV').value);
-    if(!desc){toast('Informe a descrição');return;}
+    const valor=parseFloat($('fV').value);
     if(!valor||valor<=0){toast('Informe um valor válido');return;}
     const L=S[tipo==='entrada'?'receitas':'despesas'];
-    const o={id:item?.id||uid(),desc,valor,cat,fixa,dia:fixa?(parseInt($('fDia').value)||5):null,data:fixa?null:($('fDt').value||isoHoje())};
+
+    if(soMes){
+      item.exc=item.exc||{};item.exc[mk]={valor};
+      save();close();draw();toast('Alterado só em '+mkLab(mk));return;
+    }
+    const desc=$('fD').value.trim();
+    if(!desc){toast('Informe a descrição');return;}
+    const ini=fixa?($('fIni').value||mkOff(0)):null;
+    const fim=fixa?($('fFim').value||null):null;
+    if(fim&&ini&&mkDiff(ini,fim)<0){toast('O fim não pode ser antes do início');return;}
+    const o={id:item?.id||uid(),desc,valor,cat,fixa,
+      dia:fixa?(parseInt($('fDia').value)||5):null,
+      data:fixa?null:($('fDt').value||isoHoje()),
+      inicio:ini,fim,exc:item?.exc||{}};
     if(ed)L[L.findIndex(x=>x.id===item.id)]=o;else L.push(o);
     save();close();draw();toast('Salvo');};
-  if(ed)$('del').onclick=()=>{const L=S[tipo==='entrada'?'receitas':'despesas'];L.splice(L.findIndex(x=>x.id===item.id),1);save();close();draw();toast('Excluído');};
+
+  if(ed&&!soMes)$('del').onclick=()=>{const L=S[tipo==='entrada'?'receitas':'despesas'];L.splice(L.findIndex(x=>x.id===item.id),1);save();close();draw();toast('Excluído');};
+  if(soMes&&item.exc&&item.exc[mk])$('undo').onclick=()=>{delete item.exc[mk];save();close();draw();toast('Alteração removida');};
 }
+
+/* Menu de escopo ao tocar num lançamento fixo */
+function menuTx(item,tipo,mk){
+  const L=S[tipo==='entrada'?'receitas':'despesas'];
+  const remover=()=>{L.splice(L.findIndex(x=>x.id===item.id),1);save();close();draw();toast('Excluído de todos os meses');};
+  if(!item.fixa){
+    sheetAction([{l:'Editar',fn:()=>sheetTx(tipo,item,null,mk)},{l:'Excluir',dg:1,fn:remover}]);
+    return;
+  }
+  sheetAction([
+    {l:'Editar só em '+mkLab(mk),fn:()=>sheetTx(tipo,item,'mes',mk)},
+    {l:'Editar todos os meses',fn:()=>sheetTx(tipo,item,null,mk)},
+    {l:'Remover só de '+mkLab(mk),dg:1,fn:()=>{
+      item.exc=item.exc||{};item.exc[mk]='pular';save();close();draw();toast('Removido de '+mkLab(mk));}},
+    {l:'Encerrar a partir de '+mkLab(mk),dg:1,fn:()=>{
+      const ant=new Date(+mk.slice(0,4),+mk.slice(5,7)-2,1);
+      const fim=ant.getFullYear()+'-'+String(ant.getMonth()+1).padStart(2,'0');
+      if(item.inicio&&mkDiff(item.inicio,fim)<0){remover();return;}
+      item.fim=fim;save();close();draw();toast('Encerrado a partir de '+mkLab(mk));}},
+    {l:'Excluir de todos os meses',dg:1,fn:remover},
+  ]);
+}
+
 function sheetDiv(item){
   const ed=!!item;
   open(`${HEAD((ed?'Editar':'Nova')+' dívida')}
@@ -996,8 +1080,7 @@ function wire(){
     if(b.dataset.ob==='ob-desp')sheetTx('saida');});
   document.querySelectorAll('[data-tx]').forEach(r=>r.onclick=()=>{
     const L=S[txTipo==='entrada'?'receitas':'despesas'],it=L.find(x=>x.id===r.dataset.tx);
-    sheetAction([{l:'Editar',fn:()=>sheetTx(txTipo,it)},
-      {l:'Excluir',dg:1,fn:()=>{L.splice(L.indexOf(it),1);save();close();draw();toast('Excluído');}}]);});
+    menuTx(it,txTipo,mkOff(off));});
   if($('addDiv'))$('addDiv').onclick=()=>sheetDiv();
   document.querySelectorAll('[data-div]').forEach(c=>c.onclick=()=>sheetDiv(S.dividas.find(d=>d.id===c.dataset.div)));
   if($('addMeta'))$('addMeta').onclick=()=>sheetMeta();
