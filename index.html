@@ -355,7 +355,7 @@ function haptic(){if(navigator.vibrate)navigator.vibrate(8);}
 
 /* ══════════ ESTADO ══════════ */
 let S={saldo:null,receitas:[],despesas:[],dividas:[],metas:[],limites:[],reservaAlvoMeses:6};
-let tab='painel', txTipo='saida', off=0, projMeses=12;
+let tab='painel', txTipo='saida', off=0, projMeses=12, projAberto=null;
 
 function load(){
   try{
@@ -819,6 +819,56 @@ function cardLimite(b,mk){
 }
 
 /* ───── PROJEÇÃO ───── */
+/* Tudo que compõe um mês: entradas, saídas por categoria e parcelas */
+function composicao(mk){
+  const ent=S.receitas.filter(x=>ativoEm(x,mk)).map(x=>({desc:x.desc,valor:valorNoMes(x,mk),cat:x.cat,fixa:x.fixa}))
+    .sort((a,b)=>b.valor-a.valor);
+  const porCat={};
+  S.despesas.filter(x=>ativoEm(x,mk)).forEach(x=>{
+    (porCat[x.cat]=porCat[x.cat]||{itens:[],total:0});
+    const v=valorNoMes(x,mk);
+    porCat[x.cat].itens.push({desc:x.desc,valor:v,fixa:x.fixa});
+    porCat[x.cat].total+=v;});
+  const sai=Object.keys(porCat).map(k=>({...ci(CAT_OUT,k),...porCat[k]})).sort((a,b)=>b.total-a.total);
+  const parc=S.dividas.map(d=>{
+    const v=parcelaNoMes(d,mk);if(!v)return null;
+    return {desc:d.desc,valor:v,n:mkDiff(d.inicio,mk)+1,total:d.parcelas};}).filter(Boolean);
+  return {ent,sai,parc};
+}
+function detalheMes(x){
+  const c=composicao(x.mk);
+  const bloco=(titulo,cor,linhas,rodape)=>linhas.length?`
+    <div style="margin-top:12px">
+      <div style="font-size:11.5px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;color:${cor};margin-bottom:6px">${titulo}</div>
+      ${linhas}${rodape||''}</div>`:'';
+  const linhaEnt=c.ent.map(e=>`<div style="display:flex;justify-content:space-between;gap:10px;padding:4px 0;font-size:13.5px">
+      <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${e.desc}${e.fixa?'':' <span style="color:var(--ink-3)">avulso</span>'}</span>
+      <span class="num" style="color:var(--up)">${brl(e.valor)}</span></div>`).join('');
+  const linhaSai=c.sai.map(g=>`
+    <div style="padding:5px 0">
+      <div style="display:flex;justify-content:space-between;gap:10px;font-size:13.5px">
+        <span style="flex:1"><span style="opacity:.9">${g.e}</span> ${g.l}</span>
+        <span class="num" style="font-weight:600">${brl(g.total)}</span></div>
+      ${g.itens.length>1?`<div style="padding-left:22px;margin-top:2px">${g.itens.sort((a,b)=>b.valor-a.valor).map(i=>
+        `<div style="display:flex;justify-content:space-between;gap:8px;font-size:12px;color:var(--ink-3);padding:1px 0">
+          <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${i.desc}</span>
+          <span class="num">${brl(i.valor)}</span></div>`).join('')}</div>`:''}
+    </div>`).join('');
+  const linhaParc=c.parc.map(d=>`<div style="display:flex;justify-content:space-between;gap:10px;padding:4px 0;font-size:13.5px">
+      <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${d.desc} <span style="color:var(--ink-3)">${d.n}/${d.total}</span></span>
+      <span class="num">${brl(d.valor)}</span></div>`).join('');
+
+  return `<div style="padding:2px 16px 16px;background:var(--surface)">
+    ${bloco('Entradas','var(--up)',linhaEnt)}
+    ${bloco('Saídas','var(--down)',linhaSai)}
+    ${bloco('Parcelas de dívida','var(--down)',linhaParc)}
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-top:14px;padding-top:12px;border-top:.5px solid var(--hair)">
+      <span style="font-size:15px;font-weight:600">Sobra em ${mkLong(x.mk)}</span>
+      <span class="num" style="font-size:19px;font-weight:700;color:${x.sobra>=0?'var(--up)':'var(--down)'}">${brl(x.sobra)}</span></div>
+    <div style="font-size:12.5px;color:var(--ink-3);margin-top:5px">Saldo acumulado ao fim do mês: ${brl(x.acumulado)}</div>
+  </div>`;
+}
+
 function vProj(){
   const p=projecao(projMeses);
   const pior=p.reduce((a,b)=>b.acumulado<a.acumulado?b:a,p[0]);
@@ -832,14 +882,34 @@ function vProj(){
     <div class="kpi"><div class="k">Pior<br>momento</div><div class="v num" style="color:${pior.acumulado>=0?'var(--ink)':'var(--down)'}">${kv(pior.acumulado)}</div><div class="n">${mkLab(pior.mk)}</div></div>
     <div class="kpi"><div class="k">Saldo ao<br>final</div><div class="v num" style="color:${p[p.length-1].acumulado>=0?'var(--up)':'var(--down)'}">${kv(p[p.length-1].acumulado)}</div><div class="n">${mkLab(p[p.length-1].mk)}</div></div>
   </div>
+  ${p[1]?(()=>{const n=p[1];const cmp=n.sobra-p[0].sobra;
+    return `<div class="eyebrow">Próximo mês <span class="aux">${mkLong(n.mk)}</span></div>
+    <div class="card tapp" data-pmes="${n.mk}">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px">
+        <div><div style="font-size:12px;color:var(--ink-3);font-weight:500">Deve sobrar</div>
+          <div class="num" style="font-size:30px;font-weight:700;letter-spacing:-.8px;margin-top:1px;color:${n.sobra>=0?'var(--up)':'var(--down)'}">${brl(n.sobra)}</div>
+          <div style="font-size:13px;color:var(--ink-3);margin-top:3px">${Math.abs(cmp)<1?'Igual a este mês':(cmp>0?'+'+brl(cmp)+' a mais':brl(Math.abs(cmp))+' a menos')+' que este mês'}</div></div>
+        ${CHEV}</div>
+      <div style="display:flex;gap:14px;margin-top:14px;padding-top:12px;border-top:.5px solid var(--hair)">
+        <div style="flex:1"><div style="font-size:11.5px;color:var(--ink-3);font-weight:500">Entra</div>
+          <div class="num" style="font-size:16px;font-weight:600;color:var(--up);margin-top:1px">${brl0(n.receita)}</div></div>
+        <div style="flex:1"><div style="font-size:11.5px;color:var(--ink-3);font-weight:500">Gastos</div>
+          <div class="num" style="font-size:16px;font-weight:600;margin-top:1px">${brl0(n.despesa)}</div></div>
+        <div style="flex:1"><div style="font-size:11.5px;color:var(--ink-3);font-weight:500">Dívidas</div>
+          <div class="num" style="font-size:16px;font-weight:600;margin-top:1px">${n.divida?brl0(n.divida):'—'}</div></div>
+      </div></div>`;})():''}
   ${fins.length?`<div class="alert good"><i>◆</i><span>A última parcela cai em <b>${mkLong(fins[fins.length-1])}</b>. A partir daí sua sobra sobe ${brl(S.dividas.reduce((s,d)=>s+(parcelasRestantes(d)?parcela(d):0),0))}/mês.</span></div>`:''}
-  <div class="eyebrow">Mês a mês <span class="aux">premissa: fixos constantes</span></div>
-  <div class="list">${p.map(x=>`
-    <div class="li plain"><div class="m"><div class="t">${mkLong(x.mk)}</div>
-      <div class="s num">+${kv(x.receita)} · −${kv(x.despesa)}${x.divida?' · dívidas −'+kv(x.divida):''}</div></div>
+  <div class="eyebrow">Mês a mês <span class="aux">toque para abrir</span></div>
+  <div class="list">${p.map(x=>{
+    const ab=projAberto===x.mk;
+    return `<div class="li plain tapp" data-pmes="${x.mk}" style="${ab?'background:var(--surface-2)':''}">
+      <div class="m"><div class="t">${mkLong(x.mk)}${x.i===0?' <span style="font-size:11px;color:var(--ink-3);font-weight:400">atual</span>':x.i===1?' <span style="font-size:11px;color:var(--accent);font-weight:500">próximo</span>':''}</div>
+        <div class="s num">+${kv(x.receita)} · −${kv(x.despesa)}${x.divida?' · dívidas −'+kv(x.divida):''}</div></div>
       <div style="text-align:right">
         <div class="v num" style="color:${x.sobra>=0?'var(--up)':'var(--down)'}">${x.sobra>=0?'+':'−'}${kv(Math.abs(x.sobra))}</div>
-        <div class="num" style="font-size:12px;color:${x.acumulado<0?'var(--down)':'var(--ink-3)'}">saldo ${kv(x.acumulado)}</div></div></div>`).join('')}</div>
+        <div class="num" style="font-size:12px;color:${x.acumulado<0?'var(--down)':'var(--ink-3)'}">saldo ${kv(x.acumulado)}</div></div>
+      <svg class="chev" viewBox="0 0 8 13" fill="none" stroke="var(--ink-3)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="transform:rotate(${ab?'90':'0'}deg);transition:transform .2s"><path d="M1.5 1.5 6.5 6.5 1.5 11.5"/></svg>
+    </div>${ab?detalheMes(x):''}`;}).join('')}</div>
   <div style="font-size:13px;color:var(--ink-3);line-height:1.45;padding:14px 6px 0;letter-spacing:-.08px">
     A projeção repete receitas e despesas fixas em todos os meses, soma os avulsos na data deles e distribui as parcelas conforme o mês da primeira. Não considera inflação, reajuste salarial nem rendimento sobre o saldo.</div>`;
 }
@@ -1112,6 +1182,10 @@ function wire(){
   if($('prev'))$('prev').onclick=()=>{off--;draw();};
   if($('next'))$('next').onclick=()=>{off++;draw();};
   document.querySelectorAll('[data-pm]').forEach(b=>b.onclick=()=>{projMeses=+b.dataset.pm;haptic();draw();});
+  document.querySelectorAll('[data-pmes]').forEach(r=>r.onclick=()=>{
+    const mk=r.dataset.pmes;projAberto=projAberto===mk?null:mk;haptic();draw();
+    if(projAberto)setTimeout(()=>{const el=document.querySelector(`.list [data-pmes="${mk}"]`);
+      if(el)el.scrollIntoView({behavior:'smooth',block:'center'});},60);});
   document.querySelectorAll('[data-ob]').forEach(b=>b.onclick=()=>{
     if(b.dataset.ob==='ob-saldo')sheetConfig();
     if(b.dataset.ob==='ob-rec')sheetTx('entrada');
