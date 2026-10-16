@@ -372,7 +372,7 @@ function haptic(){if(navigator.vibrate)navigator.vibrate(8);}
 
 /* ══════════ ESTADO ══════════ */
 let S={saldo:null,receitas:[],despesas:[],dividas:[],metas:[],limites:[],reservaAlvoMeses:6};
-let tab='painel', txTipo='saida', off=0, pOff=0, projMeses=12, projAberto=null;
+let tab='painel', txTipo='saida', off=0, pOff=0, projMeses=12, projAberto=null, catAberta=null;
 
 function load(){
   try{
@@ -590,7 +590,7 @@ const ICON={
 };
 function draw(){
   const a=document.getElementById('app');
-  const T={painel:'Painel',mov:'Movimentos',div:'Dívidas',metas:'Metas',proj:'Projeção'};
+  const T={painel:'Resumo',mov:'Lançamentos',div:'Dívidas',metas:'Metas',proj:'Projeção'};
   const hoje=new Date();
   const scrolled=window.scrollY>4;
   a.innerHTML=`
@@ -617,18 +617,15 @@ function view(){
 /* ───── PAINEL ───── */
 function vPainel(){
   if(S.saldo===null&&!S.receitas.length&&!S.despesas.length)return onboarding();
-  const mk=mkOff(pOff), atual=pOff===0, t=mes(mk), h=saude(mk);
-  const p=projecao(12);
-  const compromissos=t.despesa+t.divida;
-  const cats=CAT_OUT.map(c=>({...c,value:gastoCat(mk,c.k)})).filter(x=>x.value>0).sort((a,b)=>b.value-a.value);
-  const ess=essenciais(mk),nEss=t.despesa-ess;
-  const base=Math.max(t.receita,compromissos+Math.max(0,t.sobra))||1;
-  const seg=[['Essenciais',ess,'#007AFF'],['Variáveis',nEss,'#FF9500'],['Dívidas',t.divida,'#FF3B30'],['Sobra',Math.max(0,t.sobra),'#34C759']].filter(x=>x[1]>0);
+  const mk=mkOff(pOff), atual=pOff===0, t=mes(mk), h=saude(mk), p=projecao(12);
+  const sai=t.despesa+t.divida;
+  const ant=mes(mkOff(pOff-1)), delta=t.sobra-ant.sobra;
   const cont=contasDoMes(mk);
   const pctPago=cont.total>0?Math.round(cont.pago/cont.total*100):0;
-  const ant=mes(mkOff(pOff-1)), delta=t.sobra-ant.sobra;
+  const al=alertas(mk,t,p,h);
 
   return `
+  <!-- 1. QUAL MÊS -->
   <div class="monthbar">
     <button id="pprev" aria-label="Mês anterior"><svg viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7"/></svg></button>
     <div class="mid"><div class="a">${mkLong(mk)}</div>
@@ -636,65 +633,61 @@ function vPainel(){
     <button id="pnext" aria-label="Próximo mês"><svg viewBox="0 0 24 24"><path d="M9 5l7 7-7 7"/></svg></button></div>
   ${atual?'':`<div style="text-align:center;margin:-4px 0 11px"><button id="phoje" style="border:none;background:var(--fill);color:var(--accent);font-size:13px;font-weight:500;padding:6px 16px;border-radius:16px;-webkit-appearance:none">Voltar para ${mkLab(mkOff(0))}</button></div>`}
 
+  <!-- 2. O RESULTADO DO MÊS -->
   <div class="hero">
-    <div class="lbl">${atual?'Sobra prevista do mês':'Sobra prevista'}</div>
+    <div class="lbl">Sobra de ${mkLab(mk)}</div>
     <div class="big num" style="color:${t.sobra>=0?'#fff':'#FF8A85'}">${brl(t.sobra)}</div>
     <div class="delta">${Math.abs(delta)<1?'igual ao mês anterior':(delta>0?'▲ '+brl(delta)+' a mais':'▼ '+brl(Math.abs(delta))+' a menos')+' que '+mkLab(mkOff(pOff-1))}</div>
-    <div class="horizon">${seg.map(x=>`<i style="width:${x[1]/base*100}%;background:${x[2]}"></i>`).join('')}</div>
-    <div class="hlegend">${seg.map(x=>`<span><b style="background:${x[2]}"></b>${x[0]} ${Math.round(x[1]/base*100)}%</span>`).join('')}</div>
-    <div class="split">
-      <div><div class="k">Entra</div><div class="v num" style="color:#5DE28A">${brl0(t.receita)}</div></div>
-      <div><div class="k">Gastos</div><div class="v num">${brl0(t.despesa)}</div></div>
-      <div><div class="k">Dívidas</div><div class="v num">${t.divida?brl0(t.divida):'—'}</div></div>
+    <div class="split" style="margin-top:17px;padding-top:15px">
+      <div><div class="k">Entrou</div><div class="v num" style="color:#5DE28A">${brl0(t.receita)}</div></div>
+      <div><div class="k">Saiu</div><div class="v num" style="color:#FF9E99">${brl0(sai)}</div></div>
+      <div><div class="k">Sobrou</div><div class="v num">${brl0(t.sobra)}</div></div>
     </div>
   </div>
 
-  ${atual?`<div class="card tight tapp" id="cSaldo" style="display:flex;align-items:center;justify-content:space-between;gap:12px">
-    <div><div style="font-size:12.5px;color:var(--ink-3);font-weight:500">Saldo em conta hoje</div>
-      <div class="num" style="font-size:22px;font-weight:700;letter-spacing:-.5px;margin-top:1px">${S.saldo===null?'Toque para definir':brl(S.saldo)}</div></div>
-    ${CHEV}</div>`:''}
+  <!-- 3. O QUE COMPÕE: ENTRADAS -->
+  <div class="eyebrow">Entradas de ${mkLab(mk)} <span class="aux">${brl0(t.receita)}</span></div>
+  ${blocoEntradas(mk)}
 
-  ${cont.qtdTotal?`<div class="card tight">
+  <!-- 4. O QUE COMPÕE: SAÍDAS -->
+  <div class="eyebrow">Saídas de ${mkLab(mk)} <span class="aux">${brl0(sai)}</span></div>
+  ${blocoSaidas(mk,true)}
+
+  <!-- 5. SITUAÇÃO DAS CONTAS -->
+  ${cont.qtdTotal?`<div class="eyebrow">Situação das contas</div>
+  <div class="card tight">
     <div style="display:flex;justify-content:space-between;align-items:baseline;gap:10px">
-      <div style="min-width:0"><div style="font-size:12.5px;font-weight:500;color:var(--ink-3)">Contas de ${mkLab(mk)}</div>
-        <div class="num" style="font-size:23px;font-weight:700;letter-spacing:-.5px;margin-top:2px;color:${cont.aberto>0?'var(--ink)':'var(--up)'}">${cont.aberto>0?brl(cont.aberto):'Tudo pago'}</div>
+      <div style="min-width:0">
+        <div class="num" style="font-size:23px;font-weight:700;letter-spacing:-.5px;color:${cont.aberto>0?'var(--ink)':'var(--up)'}">${cont.aberto>0?brl(cont.aberto):'Tudo pago'}</div>
         <div style="font-size:13px;color:var(--ink-3);margin-top:2px">${cont.aberto>0?`em aberto · ${cont.qtdPago} de ${cont.qtdTotal} pagas`:`${cont.qtdTotal} contas quitadas`}</div></div>
       <div class="num" style="font-size:15px;font-weight:680;color:${pctPago===100?'var(--up)':'var(--accent)'}">${pctPago}%</div></div>
     <div class="track" style="margin-top:12px"><i style="width:${pctPago}%;background:${pctPago===100?'var(--up)':'var(--accent)'}"></i></div>
-  </div>`:''}
-
-  <div class="kpis">
-    <div class="kpi"><div class="k">Taxa de<br>poupança</div><div class="v num" style="color:${h.taxa>=.2?'var(--up)':h.taxa>=.05?'var(--warn)':'var(--down)'}">${Math.round(h.taxa*100)}%</div><div class="n">meta 20%</div></div>
-    <div class="kpi"><div class="k">Renda<br>comprometida</div><div class="v num" style="color:${h.comp<=.3?'var(--up)':'var(--down)'}">${Math.round(h.comp*100)}%</div><div class="n">teto 30%</div></div>
-    <div class="kpi"><div class="k">Reserva de<br>emergência</div><div class="v num" style="color:${h.mesesReserva>=3?'var(--up)':h.mesesReserva>=1?'var(--warn)':'var(--down)'}">${h.mesesReserva.toFixed(1)}m</div><div class="n">meta ${S.reservaAlvoMeses}m</div></div>
   </div>
+  ${(()=>{const v=atual?vencimentos(7):aPagar(mk);
+    return v.length?`<div style="font-size:12.5px;color:var(--ink-3);font-weight:500;margin:14px 6px 8px">${atual?'Vence nos próximos 7 dias':'Em aberto neste mês'}</div>
+      <div class="list">${v.map(x=>linhaPagar(x,mk)).join('')}</div>`:'';})()}`:''}
 
+  <!-- 6. ANÁLISE -->
+  <div class="eyebrow">Análise</div>
   ${atual?`<div class="card tight" style="display:flex;align-items:center;gap:16px">
     ${gauge(h.score)}
     <div style="flex:1;min-width:0">
       <div style="font-size:16px;font-weight:600;letter-spacing:-.32px">Saúde financeira</div>
       <div style="font-size:13.5px;color:var(--ink-2);line-height:1.42;margin-top:3px;letter-spacing:-.08px">${diagnostico(h)}</div>
     </div></div>`:''}
+  <div class="kpis">
+    <div class="kpi"><div class="k">Taxa de<br>poupança</div><div class="v num" style="color:${h.taxa>=.2?'var(--up)':h.taxa>=.05?'var(--warn)':'var(--down)'}">${Math.round(h.taxa*100)}%</div><div class="n">meta 20%</div></div>
+    <div class="kpi"><div class="k">Renda<br>comprometida</div><div class="v num" style="color:${h.comp<=.3?'var(--up)':'var(--down)'}">${Math.round(h.comp*100)}%</div><div class="n">teto 30%</div></div>
+    <div class="kpi"><div class="k">Reserva de<br>emergência</div><div class="v num" style="color:${h.mesesReserva>=3?'var(--up)':h.mesesReserva>=1?'var(--warn)':'var(--down)'}">${h.mesesReserva.toFixed(1)}m</div><div class="n">meta ${S.reservaAlvoMeses}m</div></div>
+  </div>
+  ${al.map(x=>`<div class="alert ${x.tipo}"><i>${x.tipo==='crit'?'􀇾':x.tipo==='warn'?'●':'✓'}</i><span>${x.txt}</span></div>`).join('')}
 
-  ${(()=>{const al=alertas(mk,t,p,h);return al.length?`<div class="eyebrow">Atenção</div>`+al.map(x=>`<div class="alert ${x.tipo}"><i>${x.tipo==='crit'?'􀇾':x.tipo==='warn'?'●':'✓'}</i><span>${x.txt}</span></div>`).join(''):'';})()}
-
-  ${atual?`<div class="eyebrow">Sobra mês a mês <span class="aux">12 meses</span></div>
-  <div class="card" style="padding:14px 12px 6px">${chartSobra(p)}</div>`:''}
-
-  ${cats.length?`<div class="eyebrow">Onde vai o dinheiro <span class="aux">${brl0(t.despesa)} em ${mkLab(mk)}</span></div>
-  <div class="card" style="display:flex;align-items:center;gap:18px">
-    ${donut(cats.slice(0,6))}
-    <div style="flex:1;display:flex;flex-direction:column;gap:9px;min-width:0">
-      ${cats.slice(0,5).map(c=>`<div style="display:flex;align-items:center;gap:9px;font-size:13.5px">
-        <b style="width:8px;height:8px;border-radius:2.5px;background:${c.c};flex-shrink:0"></b>
-        <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;letter-spacing:-.08px">${c.l}</span>
-        <span class="num" style="color:var(--ink-3);font-weight:500">${Math.round(c.value/(t.despesa||1)*100)}%</span></div>`).join('')}
-    </div></div>`:''}
-
-  <div class="eyebrow">${atual?'A pagar nos próximos 7 dias':'A pagar em '+mkLab(mk)}</div>
-  ${(()=>{const v=atual?vencimentos(7):aPagar(mk);
-    return v.length?`<div class="list">${v.map(x=>linhaPagar(x,mk)).join('')}</div>`
-     :`<div class="card empty"><div class="i">${cont.qtdTotal?'✓':'🗓️'}</div><div class="t">${cont.qtdTotal?'Nada em aberto':'Nada cadastrado'}</div><div class="s">${cont.qtdTotal?'Todas as contas do período estão pagas.':'Cadastre suas despesas fixas para acompanhar.'}</div></div>`;})()}
+  <!-- 7. SALDO EM CONTA -->
+  ${atual?`<div class="eyebrow">Saldo em conta</div>
+  <div class="card tight tapp" id="cSaldo" style="display:flex;align-items:center;justify-content:space-between;gap:12px">
+    <div><div class="num" style="font-size:22px;font-weight:700;letter-spacing:-.5px">${S.saldo===null?'Toque para definir':brl(S.saldo)}</div>
+      <div style="font-size:12.5px;color:var(--ink-3);margin-top:2px">Informado por você · atualize quando quiser</div></div>
+    ${CHEV}</div>`:''}
   `;
 }
 /* Contas em aberto de um mês qualquer */
@@ -924,37 +917,61 @@ function composicao(mk){
     return {desc:d.desc,valor:v,n:mkDiff(d.inicio,mk)+1,total:d.parcelas};}).filter(Boolean);
   return {ent,sai,parc};
 }
+/* ENTRADAS do mês: todo lançamento de receita, item a item */
+function blocoEntradas(mk){
+  const c=composicao(mk), tot=c.ent.reduce((s,e)=>s+e.valor,0);
+  if(!c.ent.length)return `<div class="card empty" style="padding:22px"><div class="i">💰</div><div class="t">Nenhuma entrada</div><div class="s">Cadastre suas receitas na aba Lançamentos.</div></div>`;
+  return `<div class="list">
+    ${c.ent.map(e=>{const ic=ci(CAT_IN,e.cat);
+      return `<div class="li">
+        <div class="dot" style="background:${ic.c}22">${ic.e}</div>
+        <div class="m"><div class="t">${e.desc}</div><div class="s">${ic.l}${e.fixa?'':' · avulso'}</div></div>
+        <div class="v num up">${brl(e.valor)}</div></div>`;}).join('')}
+    <div class="li plain" style="background:var(--surface-2)">
+      <div class="m"><div class="t" style="font-weight:680">Total que entra</div></div>
+      <div class="v num up" style="font-size:17px;font-weight:700">${brl(tot)}</div></div>
+  </div>`;
+}
+/* SAÍDAS do mês: categorias que abrem nos itens + parcelas de dívida */
+function blocoSaidas(mk,inter){
+  const c=composicao(mk);
+  const totP=c.parc.reduce((s,d)=>s+d.valor,0);
+  const tot=c.sai.reduce((s,g)=>s+g.total,0)+totP;
+  if(!tot)return `<div class="card empty" style="padding:22px"><div class="i">🧾</div><div class="t">Nenhuma saída</div><div class="s">Cadastre suas despesas na aba Lançamentos.</div></div>`;
+  const sub=(itens)=>`<div style="background:var(--surface-2);padding:2px 16px 11px 63px">
+    ${itens.map(i=>`<div style="display:flex;justify-content:space-between;gap:10px;padding:4px 0;font-size:13px">
+      <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--ink-2)">${i.desc}${i.fixa===false?' <span style="color:var(--ink-3)">avulso</span>':''}${i.n?` <span style="color:var(--ink-3)">${i.n}/${i.total}</span>`:''}</span>
+      <span class="num" style="color:var(--ink-2)">${brl(i.valor)}</span></div>`).join('')}</div>`;
+  return `<div class="list">
+    ${c.sai.map(g=>{
+      const id=mk+'|'+g.k, ab=!inter||catAberta===id;
+      return `<div class="li ${inter?'tapp':''}" ${inter?`data-cat="${id}"`:''} style="${ab&&inter?'background:var(--surface-2)':''}">
+        <div class="dot" style="background:${g.c}22">${g.e}</div>
+        <div class="m"><div class="t">${g.l}</div><div class="s">${g.itens.length} ${g.itens.length===1?'lançamento':'lançamentos'} · ${Math.round(g.total/tot*100)}% das saídas</div></div>
+        <div class="v num">${brl(g.total)}</div>
+        ${inter?`<svg class="chev" viewBox="0 0 8 13" fill="none" stroke="var(--ink-3)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="transform:rotate(${ab?'90':'0'}deg);transition:transform .2s"><path d="M1.5 1.5 6.5 6.5 1.5 11.5"/></svg>`:''}
+      </div>${ab?sub(g.itens.sort((a,b)=>b.valor-a.valor)):''}`;}).join('')}
+    ${c.parc.length?(()=>{const id=mk+'|__div', ab=!inter||catAberta===id;
+      return `<div class="li ${inter?'tapp':''}" ${inter?`data-cat="${id}"`:''} style="${ab&&inter?'background:var(--surface-2)':''}">
+        <div class="dot" style="background:#FF3B3022">📄</div>
+        <div class="m"><div class="t">Parcelas de dívida</div><div class="s">${c.parc.length} ${c.parc.length===1?'contrato':'contratos'} · ${Math.round(totP/tot*100)}% das saídas</div></div>
+        <div class="v num">${brl(totP)}</div>
+        ${inter?`<svg class="chev" viewBox="0 0 8 13" fill="none" stroke="var(--ink-3)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="transform:rotate(${ab?'90':'0'}deg);transition:transform .2s"><path d="M1.5 1.5 6.5 6.5 1.5 11.5"/></svg>`:''}
+      </div>${ab?sub(c.parc):''}`;})():''}
+    <div class="li plain" style="background:var(--surface-2)">
+      <div class="m"><div class="t" style="font-weight:680">Total que sai</div></div>
+      <div class="v num" style="font-size:17px;font-weight:700">${brl(tot)}</div></div>
+  </div>`;
+}
 function detalheMes(x){
-  const c=composicao(x.mk);
-  const bloco=(titulo,cor,linhas,rodape)=>linhas.length?`
-    <div style="margin-top:12px">
-      <div style="font-size:11.5px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;color:${cor};margin-bottom:6px">${titulo}</div>
-      ${linhas}${rodape||''}</div>`:'';
-  const linhaEnt=c.ent.map(e=>`<div style="display:flex;justify-content:space-between;gap:10px;padding:4px 0;font-size:13.5px">
-      <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${e.desc}${e.fixa?'':' <span style="color:var(--ink-3)">avulso</span>'}</span>
-      <span class="num" style="color:var(--up)">${brl(e.valor)}</span></div>`).join('');
-  const linhaSai=c.sai.map(g=>`
-    <div style="padding:5px 0">
-      <div style="display:flex;justify-content:space-between;gap:10px;font-size:13.5px">
-        <span style="flex:1"><span style="opacity:.9">${g.e}</span> ${g.l}</span>
-        <span class="num" style="font-weight:600">${brl(g.total)}</span></div>
-      ${g.itens.length>1?`<div style="padding-left:22px;margin-top:2px">${g.itens.sort((a,b)=>b.valor-a.valor).map(i=>
-        `<div style="display:flex;justify-content:space-between;gap:8px;font-size:12px;color:var(--ink-3);padding:1px 0">
-          <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${i.desc}</span>
-          <span class="num">${brl(i.valor)}</span></div>`).join('')}</div>`:''}
-    </div>`).join('');
-  const linhaParc=c.parc.map(d=>`<div style="display:flex;justify-content:space-between;gap:10px;padding:4px 0;font-size:13.5px">
-      <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${d.desc} <span style="color:var(--ink-3)">${d.n}/${d.total}</span></span>
-      <span class="num">${brl(d.valor)}</span></div>`).join('');
-
-  return `<div style="padding:2px 16px 16px;background:var(--surface)">
-    ${bloco('Entradas','var(--up)',linhaEnt)}
-    ${bloco('Saídas','var(--down)',linhaSai)}
-    ${bloco('Parcelas de dívida','var(--down)',linhaParc)}
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-top:14px;padding-top:12px;border-top:.5px solid var(--hair)">
-      <span style="font-size:15px;font-weight:600">Sobra em ${mkLong(x.mk)}</span>
-      <span class="num" style="font-size:19px;font-weight:700;color:${x.sobra>=0?'var(--up)':'var(--down)'}">${brl(x.sobra)}</span></div>
-    <div style="font-size:12.5px;color:var(--ink-3);margin-top:5px">Entrou ${brl(x.receita)} · saiu ${brl(x.despesa+x.divida)}</div>
+  return `<div style="padding:4px 12px 14px;background:var(--surface-2)">
+    <div style="font-size:12px;font-weight:600;color:var(--up);margin:6px 4px 6px">ENTRADAS</div>
+    ${blocoEntradas(x.mk)}
+    <div style="font-size:12px;font-weight:600;color:var(--down);margin:14px 4px 6px">SAÍDAS</div>
+    ${blocoSaidas(x.mk,false)}
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-top:14px;padding:12px 6px 0;border-top:.5px solid var(--hair)">
+      <span style="font-size:15px;font-weight:650">Sobra de ${mkLong(x.mk)}</span>
+      <span class="num" style="font-size:20px;font-weight:700;color:${x.sobra>=0?'var(--up)':'var(--down)'}">${brl(x.sobra)}</span></div>
   </div>`;
 }
 
@@ -1255,19 +1272,21 @@ function sheetAporte(g){
 
 /* ══════════ EVENTOS ══════════ */
 function wire(){
-  document.querySelectorAll('[data-tab]').forEach(b=>b.onclick=()=>{if(tab!==b.dataset.tab)haptic();tab=b.dataset.tab;pOff=0;window.scrollTo(0,0);draw();});
+  document.querySelectorAll('[data-tab]').forEach(b=>b.onclick=()=>{if(tab!==b.dataset.tab)haptic();tab=b.dataset.tab;pOff=0;catAberta=null;window.scrollTo(0,0);draw();});
   if($('gear'))$('gear').onclick=sheetConfig;
   if($('fab'))$('fab').onclick=()=>sheetTx(txTipo);
   document.querySelectorAll('[data-tt]').forEach(b=>b.onclick=()=>{txTipo=b.dataset.tt;haptic();draw();});
-  if($('pprev'))$('pprev').onclick=()=>{pOff--;window.scrollTo(0,0);draw();};
-  if($('pnext'))$('pnext').onclick=()=>{pOff++;window.scrollTo(0,0);draw();};
-  if($('cSaldo'))$('cSaldo').onclick=sheetConfig;
-  if($('phoje'))$('phoje').onclick=()=>{pOff=0;haptic();window.scrollTo(0,0);draw();};
   document.querySelectorAll('[data-pagar]').forEach(b=>b.onclick=e=>{
     e.stopPropagation();
     const id=b.dataset.pagar,mk=b.dataset.pmk;
     const alvo = b.dataset.ptipo==='p' ? S.dividas.find(d=>d.id===id) : S.despesas.find(x=>x.id===id);
     if(alvo)togglePago(alvo,mk);});
+  if($('cSaldo'))$('cSaldo').onclick=sheetConfig;
+  if($('pprev'))$('pprev').onclick=()=>{pOff--;catAberta=null;window.scrollTo(0,0);draw();};
+  if($('pnext'))$('pnext').onclick=()=>{pOff++;catAberta=null;window.scrollTo(0,0);draw();};
+  if($('phoje'))$('phoje').onclick=()=>{pOff=0;catAberta=null;haptic();window.scrollTo(0,0);draw();};
+  document.querySelectorAll('[data-cat]').forEach(r=>r.onclick=()=>{
+    const id=r.dataset.cat;catAberta=catAberta===id?null:id;haptic();draw();});
   if($('prev'))$('prev').onclick=()=>{off--;draw();};
   if($('next'))$('next').onclick=()=>{off++;draw();};
   document.querySelectorAll('[data-pm]').forEach(b=>b.onclick=()=>{projMeses=+b.dataset.pm;haptic();draw();});
