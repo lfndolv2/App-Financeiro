@@ -1178,10 +1178,10 @@ function buildForm(e){
         <span style="font-size:14px;color:var(--text3);min-width:30px">Vence</span>
         <input class="f-input" id="f-due" type="number" placeholder="dia —" min="1" max="31" value="${e&&e.dueDay?e.dueDay:''}" style="flex:1">
       </div>`:''}
-      ${curT==='despesa'?`<div class="row" style="cursor:default;padding:10px 14px;gap:8px;border-bottom:none" id="wp-parc">
+      <div class="row" style="cursor:default;padding:10px 14px;gap:8px;border-bottom:none" id="wp-parc">
         <span style="font-size:14px;color:var(--text3);min-width:40px">Parcelas</span>
         <input class="f-input" id="f-parc" type="number" min="1" max="60" value="${e?e.parcelas:1}" style="flex:1;text-align:right">
-      </div>`:''}
+      </div>
     </div>
   </div>
   <div class="f-block">
@@ -1200,7 +1200,7 @@ function buildForm(e){
   </div>`:''}`;
 }
 function formFoot(e){return e?`<button class="btn btn-dark" onclick="doSaveEdit('${e.id}')">Salvar</button><button class="btn btn-ghost" onclick="closeSheet()">Cancelar</button>`:`<button class="btn btn-dark" onclick="doSaveEntry()">Adicionar</button><button class="btn btn-ghost" onclick="closeSheet()">Cancelar</button>`;}
-function setMType(t){mType=t;document.getElementById('tp-rec').className='seg-btn'+(t==='receita'?' on g':'');document.getElementById('tp-desp').className='seg-btn'+(t==='despesa'?' on r':'');['wp-cat','wp-met','wp-parc'].forEach(id=>{const el=document.getElementById(id);if(el)el.style.display=t==='despesa'?'':'none';});const fv=document.getElementById('f-value');if(fv)fv.style.color=t==='receita'?'var(--green)':'var(--red)';}
+function setMType(t){mType=t;document.getElementById('tp-rec').className='seg-btn'+(t==='receita'?' on g':'');document.getElementById('tp-desp').className='seg-btn'+(t==='despesa'?' on r':'');['wp-cat','wp-met'].forEach(id=>{const el=document.getElementById(id);if(el)el.style.display=t==='despesa'?'':'none';});const fv=document.getElementById('f-value');if(fv)fv.style.color=t==='receita'?'var(--green)':'var(--red)';}
 function setMetodo(m){const h=document.getElementById('f-metodo');if(h)h.value=m;['din','deb','cre'].forEach(k=>{const b=document.getElementById('mp-'+k);if(b)b.classList.toggle('on',k===m.slice(0,3));});const c=document.getElementById('f-cat');if(c){if(m==='credito'){c.value='cartao';c.disabled=true;}else{c.disabled=false;}}}
 function selScope(w){const h=document.getElementById('scope-fut');if(h)h.value=w==='future'?'1':'';const o=document.getElementById('sc-only'),f=document.getElementById('sc-fut');if(o)o.classList.toggle('on',w==='only');if(f)f.classList.toggle('on',w==='future');}
 
@@ -1210,7 +1210,7 @@ function doSaveEntry(){
   const month=parseInt(document.getElementById('f-month').value);
   const year=parseInt(document.getElementById('f-year').value);
   const paid=document.getElementById('f-paid').checked;
-  const parcEl=document.getElementById('f-parc');const parc=mType==='despesa'?(parcEl?parseInt(parcEl.value)||1:1):1;
+  const parcEl=document.getElementById('f-parc');const parc=parcEl?parseInt(parcEl.value)||1:1;
   const mEl=document.getElementById('f-metodo');const metodo=mType==='despesa'?(mEl?mEl.value:'dinheiro'):null;
   const catEl=document.getElementById('f-cat');const cat=mType==='despesa'?(metodo==='credito'?'cartao':(catEl?catEl.value:'outros')):'receita';
   const rec=document.getElementById('f-rec').checked;
